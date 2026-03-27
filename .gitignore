@@ -1,0 +1,45 @@
+# Environments
+.venv/
+venv/
+env/
+venv.bak/
+.env
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# Flutter / Dart
+build/
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.metadata
+.packages
+pubspec.lock
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+pytest_output.txt
+pytest_output_utf8.txt
+analyze_output.txt
+login_analyze_out.txt
+login_analyze_out_utf8.txt
+register_analyze_out.txt
+register_analyze_out_utf8.txt
+test_out.txt
+test_out_utf8.txt
+test_output.txt
+test_output_utf8.txt
+pip_install_log.txt
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploads
+backend/uploads/
