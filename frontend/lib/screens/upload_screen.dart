@@ -1,34 +1,59 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import 'package:image_picker/image_picker.dart';
+import 'package:file_picker/file_picker.dart';
 import '../theme.dart';
 import '../services/api_service.dart';
 
+// Holds any picked file (image or PDF) with its raw bytes
+class _PickedFile {
+  final String name;
+  final List<int> bytes;
+  _PickedFile(this.name, this.bytes);
+}
+
 class UploadScreen extends StatefulWidget {
-  const UploadScreen({super.key});
+  final void Function(Map<String, dynamic>)? onCorrectionComplete;
+  const UploadScreen({super.key, this.onCorrectionComplete});
 
   @override
   State<UploadScreen> createState() => _UploadScreenState();
 }
 
 class _UploadScreenState extends State<UploadScreen> {
-  final ImagePicker _picker = ImagePicker();
   
-  List<String> _questionPapers = [];
-  List<String> _answerKeys = [];
-  List<String> _studentSheets = [];
+  List<_PickedFile> _questionPapers = [];
+  List<_PickedFile> _answerKeys = [];
+  List<_PickedFile> _studentSheets = [];
   bool _isProcessing = false;
+  bool _isCorrectionDone = false;
+  Map<String, dynamic>? _correctionResult;
+  double _progressPercent = 0;
+  String _statusMessage = '';
 
   final TextEditingController _examIdController = TextEditingController(text: 'EXAM-${DateTime.now().year}-${DateTime.now().millisecondsSinceEpoch.toString().substring(10)}');
   final TextEditingController _examTitleController = TextEditingController(text: 'Final Year Examination');
+  final TextEditingController _totalMarksController = TextEditingController();
+  final TextEditingController _passingMarksController = TextEditingController();
 
-  Future<void> _pickFiles(List<String> targetList) async {
-    final List<XFile> images = await _picker.pickMultiImage();
-    if (images.isNotEmpty) {
-      setState(() {
-        targetList.addAll(images.map((e) => e.path));
-      });
+  Future<void> _pickFiles(List<_PickedFile> targetList) async {
+    // Single unified picker — supports JPG, PNG and PDF in one dialog
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
+      allowMultiple: true,
+      withData: true, // ensures bytes are always available on all platforms
+    );
+
+    if (result == null) return;
+
+    final picked = result.files
+        .where((f) => f.bytes != null)
+        .map((f) => _PickedFile(f.name, f.bytes!.toList()))
+        .toList();
+
+    if (picked.isNotEmpty) {
+      setState(() => targetList.addAll(picked));
     }
   }
 
@@ -46,30 +71,89 @@ class _UploadScreenState extends State<UploadScreen> {
     
     setState(() {
       _isProcessing = true;
+      _progressPercent = 0;
+      _statusMessage = 'Connecting to server...';
     });
 
     try {
+      final channel = ApiService.processWithWebSocket();
+      
+      // 1. Send Config
       final gradeRequestParams = {
         "exam_id": _examIdController.text.trim(),
         "exam_title": _examTitleController.text.trim(),
+        "total_marks": int.tryParse(_totalMarksController.text.trim()) ?? 0,
+        "passing_marks": int.tryParse(_passingMarksController.text.trim()) ?? 0,
         "model_answers": [] 
       };
+      
+      channel.sink.add(jsonEncode({
+        "type": "config",
+        "data": gradeRequestParams
+      }));
 
-      final result = await ApiService.processAnswerSheet(
-        imagePaths: _studentSheets,
-        questionPaperPaths: _questionPapers.isNotEmpty ? _questionPapers : null,
-        answerKeyPaths: _answerKeys.isNotEmpty ? _answerKeys : null,
-        gradeRequestJson: jsonEncode(gradeRequestParams),
-      );
+      // 2. Send student sheet files
+      for (final file in _studentSheets) {
+        final b64 = base64Encode(file.bytes);
+        channel.sink.add(jsonEncode({
+          "type": "image",
+          "filename": file.name,
+          "data": b64
+        }));
+      }
 
-      if (!mounted) return;
+      // 2b. Send answer key files (if any)
+      for (final file in _answerKeys) {
+        channel.sink.add(jsonEncode({
+          "type": "answer_key",
+          "filename": file.name,
+          "data": base64Encode(file.bytes)
+        }));
+      }
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Correction Complete!')),
-      );
+      // 2c. Send question paper files (if any)
+      for (final file in _questionPapers) {
+        channel.sink.add(jsonEncode({
+          "type": "question_paper",
+          "filename": file.name,
+          "data": base64Encode(file.bytes)
+        }));
+      }
 
-      // Navigate back to Dashboard with results (resets state via go)
-      context.go('/main', extra: result);
+      // 3. Start Processing
+      channel.sink.add(jsonEncode({"type": "process"}));
+
+      // 4. Listen for updates from server
+      await for (final message in channel.stream) {
+        final decoded = jsonDecode(message);
+        final status = decoded['status'];
+        final msg = decoded['message'];
+
+        if (status == 'progress') {
+          setState(() {
+            _statusMessage = msg;
+            _progressPercent = (decoded['percent'] ?? 0) / 100.0;
+          });
+        } else if (status == 'complete') {
+          setState(() {
+            _statusMessage = 'Finalizing...';
+            _progressPercent = 1.0;
+          });
+
+          if (!mounted) return;
+          await Future.delayed(const Duration(milliseconds: 500));
+
+          if (decoded['data'] != null) {
+            setState(() {
+              _isCorrectionDone = true;
+              _correctionResult = Map<String, dynamic>.from(decoded['data']);
+            });
+          }
+          break;
+        } else if (status == 'error') {
+          throw Exception(msg);
+        }
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -101,7 +185,16 @@ class _UploadScreenState extends State<UploadScreen> {
           )
         ],
       ),
-      body: SingleChildScrollView(
+      body: _isCorrectionDone
+          ? _buildSuccessView()
+          : _isProcessing
+              ? _buildProcessingView()
+              : _buildUploadForm(),
+    );
+  }
+
+  Widget _buildUploadForm() {
+    return SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -116,7 +209,7 @@ class _UploadScreenState extends State<UploadScreen> {
               style: TextStyle(fontSize: 14, color: textMuted, height: 1.5),
             ),
             const SizedBox(height: 24),
-            
+
             // --- NEW EXAM INFO SECTION ---
             Container(
               padding: const EdgeInsets.all(20),
@@ -142,6 +235,34 @@ class _UploadScreenState extends State<UploadScreen> {
                       hintText: 'e.g. MATH101',
                       prefixIcon: Icon(Icons.tag),
                     ),
+                  ),
+                  const SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: TextField(
+                          controller: _totalMarksController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Total Marks',
+                            hintText: 'e.g. 100',
+                            prefixIcon: Icon(Icons.functions),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: TextField(
+                          controller: _passingMarksController,
+                          keyboardType: TextInputType.number,
+                          decoration: const InputDecoration(
+                            labelText: 'Passing Marks',
+                            hintText: 'e.g. 40',
+                            prefixIcon: Icon(Icons.done_all),
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -186,6 +307,124 @@ class _UploadScreenState extends State<UploadScreen> {
               ],
             ),
             const SizedBox(height: 40),
+          ],
+        ),
+    );
+  }
+
+  Widget _buildProcessingView() {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(32),
+        margin: const EdgeInsets.symmetric(horizontal: 24),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(24),
+          boxShadow: [
+            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20, offset: const Offset(0, 10))
+          ],
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: primaryBlue.withOpacity(0.1),
+                shape: BoxShape.circle,
+              ),
+              child: SizedBox(
+                width: 60,
+                height: 60,
+                child: CircularProgressIndicator(
+                  value: _progressPercent > 0 ? _progressPercent : null,
+                  strokeWidth: 4,
+                  valueColor: AlwaysStoppedAnimation<Color>(primaryBlue),
+                  backgroundColor: Colors.blue.shade50,
+                ),
+              ),
+            ),
+            const SizedBox(height: 32),
+            Text(
+              'Correction in Progress',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: textDark),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              _statusMessage,
+              style: TextStyle(fontSize: 14, color: primaryBlue, fontWeight: FontWeight.w600),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '${(_progressPercent * 100).toInt()}% Completed\nThis may take a minute depending on handwriting complexity.',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: textMuted, height: 1.5),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSuccessView() {
+    return Center(
+      child: Container(
+        padding: const EdgeInsets.all(40),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TweenAnimationBuilder(
+              duration: const Duration(milliseconds: 600),
+              curve: Curves.elasticOut,
+              tween: Tween<double>(begin: 0.5, end: 1.0),
+              builder: (context, value, child) {
+                return Transform.scale(
+                  scale: value,
+                  child: child,
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.all(24),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(Icons.check_circle, color: Colors.green, size: 80),
+              ),
+            ),
+            const SizedBox(height: 32),
+            const Text(
+              'Correction is done!',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: textDark),
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Your answer sheets have been successfully processed and graded.',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 14, color: textMuted, height: 1.5),
+            ),
+            const SizedBox(height: 48),
+            ElevatedButton(
+              onPressed: () {
+                if (widget.onCorrectionComplete != null && _correctionResult != null) {
+                  widget.onCorrectionComplete!(_correctionResult!);
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: primaryBlue,
+                minimumSize: const Size(double.infinity, 56),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+              ),
+              child: const Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text('Go to Dashboard', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.white)),
+                  SizedBox(width: 8),
+                  Icon(Icons.arrow_forward, color: Colors.white),
+                ],
+              ),
+            ),
           ],
         ),
       ),
@@ -375,9 +614,10 @@ class _UploadScreenState extends State<UploadScreen> {
           ),
           if (_studentSheets.isNotEmpty) ...[
             const SizedBox(height: 16),
-            ..._studentSheets.take(2).map((path) => _buildUploadedFileRow(path.split('/').last, 'Ready', Icons.check_circle, Colors.green, onRemove: () {
-              setState(() => _studentSheets.remove(path));
+            ..._studentSheets.take(2).map((file) => _buildUploadedFileRow(file.name, 'Ready', Icons.check_circle, Colors.green, onRemove: () {
+              setState(() => _studentSheets.remove(file));
             })),
+
             if (_studentSheets.length > 2)
               Container(
                 width: double.infinity,

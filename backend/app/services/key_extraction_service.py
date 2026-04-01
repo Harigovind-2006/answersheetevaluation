@@ -20,16 +20,18 @@ settings = get_settings()
 class KeyExtractor:
     """Extracts marking schemes and model answers using Gemini."""
 
-    MODEL_NAME = "gemini-1.5-flash"  # Flash is faster and good for extraction
+    MODEL_NAME = "gemini-2.5-flash"  # Flash is faster and good for extraction
 
-    SYSTEM_INSTRUCTION = """You are an expert exam coordinator.
-Your task is to extract a structured marking scheme from OCR text of a Question Paper and/or an Answer Key.
-You MUST:
-- Identify each question number.
-- Extract the model/correct answer for each question.
-- Extract the maximum marks assigned to each question.
-- If multiple parts exist (e.g. 1a, 1b), flatten them or treat them as separate entries if possible.
-- Return ONLY valid JSON as a list of objects.
+    SYSTEM_INSTRUCTION = """You are an expert exam coordinator and subject matter expert.
+Your task is to build a structured marking scheme from the OCR text of a Question Paper and optionally an Answer Key.
+
+Rules:
+- Identify each question number and its maximum marks.
+- If an Answer Key is provided, use it as the model answer.
+- If NO Answer Key is provided, use your subject knowledge to generate the correct/expected model answer for each question based on the question text.
+- If multiple parts exist (e.g. 1a, 1b), treat each as a separate entry.
+- Return ONLY valid JSON — a list of objects, no extra text.
+
 JSON structure:
 [
   {
@@ -73,14 +75,30 @@ JSON structure:
         if not (question_paper_text or answer_key_text):
             return []
 
+        has_answer_key = bool(answer_key_text.strip())
+        has_question_paper = bool(question_paper_text.strip())
+
+        if has_answer_key and has_question_paper:
+            mode_note = "Both a question paper and an answer key are provided. Use the answer key as model answers."
+        elif has_answer_key:
+            mode_note = "Only an answer key is provided. Extract questions and answers from it."
+        else:
+            mode_note = (
+                "Only a question paper is provided — NO answer key. "
+                "Use your subject knowledge to generate the correct expected answer for each question. "
+                "Do NOT leave model_answer blank."
+            )
+
         prompt = f"""
+{mode_note}
+
 QUESTION PAPER OCR TEXT:
-{question_paper_text}
+{question_paper_text or '(not provided)'}
 
 ANSWER KEY OCR TEXT:
-{answer_key_text}
+{answer_key_text or '(not provided)'}
 
-Extract the marking scheme now.
+Build the marking scheme now.
 """
         logger.info("Extracting marking scheme from provided documents...")
         

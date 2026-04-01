@@ -202,8 +202,10 @@ class ProcessedImage(BaseModel):
 class GradeRequest(BaseModel):
     exam_id: str
     exam_title: str
-    student_name: str
-    roll_number: str
+    student_name: str = ""
+    roll_number: str = ""
+    total_marks: int = 0
+    passing_marks: int = 0
     model_answers: list[ModelAnswer] = Field(default_factory=list)
 
 
@@ -235,6 +237,12 @@ class HealthResponse(BaseModel):
 class LoginRequest(BaseModel):
     email: str
     password: str
+
+
+class RegisterRequest(BaseModel):
+    email: str
+    password: str
+    full_name: str
 
 
 class AuthResponse(BaseModel):

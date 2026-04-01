@@ -43,9 +43,9 @@ GRADE_BOUNDARIES = [
 
 
 class GeminiGrader:
-    """Grades extracted answers using Gemini 1.5 Pro."""
+    """Grades extracted answers using Gemini 2.5 Flash."""
 
-    MODEL_NAME = "gemini-1.5-pro"
+    MODEL_NAME = "gemini-2.5-flash"
 
     SYSTEM_INSTRUCTION = """You are an automated exam grader.
 Your ONLY job is to compare student answers against model answers and return numerical marks.
@@ -83,6 +83,9 @@ You MUST:
         student_name: str = "",
         roll_number: str = "",
         exam_id: str = "",
+        total_marks: int = 0,
+        passing_marks: int = 0,
+        raw_student_text: str = "",
     ) -> GradingResult:
         """
         Full grading pipeline.
@@ -93,7 +96,7 @@ You MUST:
             f"({len(student_answers)} answers vs {len(model_answers)} questions)"
         )
 
-        prompt = self._build_prompt(student_answers, model_answers, exam_title)
+        prompt = self._build_prompt(student_answers, model_answers, exam_title, raw_student_text)
 
         try:
             response = await self._call_gemini(prompt)
@@ -105,9 +108,12 @@ You MUST:
 
         # Calculate totals
         total_obtained = sum(s.marks_obtained for s in scores_map.values())
-        total_available = sum(m.max_marks for m in model_answers)
+        computed_available = sum(m.max_marks for m in model_answers)
+        total_available = total_marks if total_marks > 0 else computed_available
         percentage = (total_obtained / total_available * 100) if total_available > 0 else 0.0
-        grade = self._calculate_grade(percentage)
+        
+        is_passed = (total_obtained >= passing_marks) if passing_marks > 0 else (percentage >= 50.0)
+        grade_str = "Passed" if is_passed else "Failed"
 
         result = GradingResult(
             student_name=student_name or "Unknown Student",
@@ -118,13 +124,13 @@ You MUST:
             total_marks_obtained=total_obtained,
             total_marks_available=total_available,
             percentage=round(percentage, 2),
-            grade=grade,
+            grade=grade_str,
             graded_at=datetime.now(timezone.utc).isoformat(),
         )
 
         logger.success(
             f"Graded: {student_name} — {total_obtained}/{total_available} "
-            f"({percentage:.1f}%) Grade: {grade}"
+            f"({percentage:.1f}%) Grade: {grade_str}"
         )
         return result
 
@@ -137,6 +143,7 @@ You MUST:
         student_answers: list[ExtractedAnswer],
         model_answers: list[ModelAnswer],
         exam_title: str,
+        raw_student_text: str = "",
     ) -> str:
         lines = [
             f"EXAM: {exam_title}",
@@ -153,22 +160,20 @@ You MUST:
                     f"  Also acceptable: {', '.join(ma.acceptable_answers)}"
                 )
 
-        lines += ["", "=== STUDENT ANSWERS ==="]
-
-        answered_nums = {a.question_number for a in student_answers}
-
-        for ma in sorted(model_answers, key=lambda x: x.question_number):
-            student_ans = next(
-                (a for a in student_answers if a.question_number == ma.question_number),
-                None,
-            )
-            if student_ans:
-                conf_pct = int(student_ans.confidence * 100)
-                lines.append(
-                    f"Q{ma.question_number} [OCR confidence {conf_pct}%]: {student_ans.answer_text}"
-                )
-            else:
-                lines.append(f"Q{ma.question_number}: [NO ANSWER]")
+        lines += ["", "=== STUDENT ANSWERS (OCR Extracted) ==="]
+        lines.append("Note: The student might have numbered their answers differently or poorly. Please read all answers below and map them to the correct model questions based on content and context if the numbers do not perfectly align.")
+        
+        for ans in student_answers:
+            lines.append(f"[Labeled as Q{ans.question_number}]: {ans.answer_text}")
+            
+        if not student_answers:
+            lines.append("[NO STRUCTURED ANSWERS EXTRACTED FROM SHEET]")
+            
+        if raw_student_text:
+            lines += ["", "--- RAW STUDENT SHEET TRANSCRIPTION (FALLBACK) ---"]
+            lines.append("If the structured answers above are missing or incomplete, search through this raw transcription to find and map answers to the questions:")
+            lines.append(raw_student_text)
+            lines.append("--------------------------------------------------")
 
         lines += [
             "",
@@ -187,17 +192,30 @@ You MUST:
 
     async def _call_gemini(self, prompt: str) -> str:
         """Call Gemini API asynchronously."""
-        # google-generativeai doesn't have native async; run in executor
         import asyncio
-
+        import time
+        from loguru import logger
+        
         loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(
-            None,
-            lambda: self.model.generate_content(prompt),
-        )
-        text = response.text
-        logger.debug(f"Gemini raw response: {text[:300]}")
-        return text
+        max_retries = 3
+        
+        for attempt in range(max_retries):
+            try:
+                response = await loop.run_in_executor(
+                    None,
+                    lambda: self.model.generate_content(prompt),
+                )
+                text = response.text
+                logger.debug(f"Gemini raw response: {text[:300]}")
+                return text
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "Quota exceeded" in err_str:
+                    logger.warning(f"Rate limit hit! Sleeping 40s. Attempt {attempt+1}/{max_retries}")
+                    if attempt < max_retries - 1:
+                        await asyncio.sleep(40)
+                        continue
+                raise e
 
     def _parse_scores(
         self,

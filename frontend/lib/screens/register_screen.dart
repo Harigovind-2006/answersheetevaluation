@@ -15,6 +15,7 @@ class RegisterScreen extends StatefulWidget {
 }
 
 class _RegisterScreenState extends State<RegisterScreen> {
+  final TextEditingController _nameController = TextEditingController();
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _confirmPasswordController = TextEditingController();
@@ -44,7 +45,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
     });
 
     try {
-      final data = await ApiService.register(email, password);
+      final data = await ApiService.register(email, password, _nameController.text.trim());
 
       if (!mounted) return;
 
@@ -72,6 +73,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
   @override
   void dispose() {
+    _nameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
@@ -112,6 +114,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
                 ),
               ),
               const SizedBox(height: 40),
+              const Text(
+                'Full Name',
+                style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textDark),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _nameController,
+                decoration: InputDecoration(
+                  prefixIcon: const Icon(Icons.person_outline, color: textMuted),
+                  hintText: 'Enter your full name',
+                  hintStyle: const TextStyle(color: textMuted),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: Colors.grey.shade300),
+                  ),
+                  enabledBorder: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(8),
+                    borderSide: BorderSide(color: Colors.grey.shade300),
+                  ),
+                  filled: true,
+                  fillColor: Colors.transparent,
+                ),
+              ),
+              const SizedBox(height: 20),
               const Text(
                 'Email Address',
                 style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: textDark),

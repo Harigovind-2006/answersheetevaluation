@@ -145,7 +145,7 @@ async def process_answer_sheet(
 
     try:
         for i, upload in enumerate(images):
-            if upload.content_type not in ("image/jpeg", "image/png", "image/webp", "image/tiff"):
+            if upload.content_type not in ("image/jpeg", "image/png", "image/webp", "image/tiff", "application/pdf"):
                 errors.append(f"Page {i+1}: unsupported file type {upload.content_type}")
                 continue
 

@@ -13,26 +13,38 @@ class MainScreen extends StatefulWidget {
 
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 1;
-
-  late List<Widget> _screens;
+  Map<String, dynamic>? _dashboardData;
 
   @override
   void initState() {
     super.initState();
-    if (widget.initialData != null) {
-      _currentIndex = 0; // Switch to dashboard if we have new data
+    _dashboardData = widget.initialData;
+    if (_dashboardData != null) {
+      _currentIndex = 0;
     }
-    _screens = [
-      DashboardScreen(dashboardData: widget.initialData),
-      const UploadScreen(),
-      const Center(child: Text('History Screen Placeholder')),
-    ];
+  }
+
+  void _onCorrectionComplete(Map<String, dynamic> result) {
+    setState(() {
+      _dashboardData = result;
+      _currentIndex = 0; // Switch to dashboard
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      body: _screens[_currentIndex],
+      body: IndexedStack(
+        index: _currentIndex,
+        children: [
+          DashboardScreen(
+            dashboardData: _dashboardData,
+            onGoToUpload: () => setState(() => _currentIndex = 1),
+          ),
+          UploadScreen(onCorrectionComplete: _onCorrectionComplete),
+          const Center(child: Text('History Screen Placeholder')),
+        ],
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),

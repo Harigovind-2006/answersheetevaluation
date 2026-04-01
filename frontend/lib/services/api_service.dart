@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:http/http.dart' as http;
+import 'package:web_socket_channel/web_socket_channel.dart';
 
 class ApiService {
   static String get baseRoot {
@@ -10,6 +11,11 @@ class ApiService {
       if (Platform.isAndroid) return 'http://10.0.2.2:8000';
     } catch (_) {}
     return 'http://127.0.0.1:8000';
+  }
+
+  static String get baseWsRoot {
+    final host = baseRoot.split('//')[1];
+    return 'ws://$host';
   }
 
   static String get baseUrl => '$baseRoot/api';
@@ -21,9 +27,8 @@ class ApiService {
   }
 
   static Future<Map<String, dynamic>> login(String email, String password) async {
-    final uri = Uri.parse('$baseRoot/login');
     final response = await http.post(
-      uri,
+      Uri.parse('$baseRoot/login'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'email': email, 'password': password}),
     );
@@ -42,12 +47,15 @@ class ApiService {
     }
   }
 
-  static Future<Map<String, dynamic>> register(String email, String password) async {
-    final uri = Uri.parse('$baseRoot/register');
+  static Future<Map<String, dynamic>> register(String email, String password, String name) async {
     final response = await http.post(
-      uri,
+      Uri.parse('$baseRoot/register'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'email': email, 'password': password}),
+      body: jsonEncode({
+        'email': email,
+        'password': password,
+        'full_name': name,
+      }),
     );
 
     if (response.statusCode == 200) {
@@ -200,5 +208,11 @@ class ApiService {
     } catch (e) {
       throw Exception('Network error during gradeOnly: $e');
     }
+  }
+
+  static WebSocketChannel processWithWebSocket() {
+    return WebSocketChannel.connect(
+      Uri.parse('$baseWsRoot/ws/process'),
+    );
   }
 }
