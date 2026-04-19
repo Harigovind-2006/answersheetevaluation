@@ -36,7 +36,7 @@ JSON structure:
 [
   {
     "question_id": "q1",
-    "question_number": 1,
+    "question_number": "1",
     "model_answer": "The capital of France is Paris.",
     "max_marks": 5,
     "section": "A",

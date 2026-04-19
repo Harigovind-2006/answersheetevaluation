@@ -45,18 +45,18 @@ Expected JSON format:
   "roll_number": "STU12345",
   "extracted_answers": [
     {
-      "question_number": 1,
+      "question_number": "1",
       "answer_text": "The mitochondria is the powerhouse of the cell."
     },
     {
-      "question_number": 2,
+      "question_number": "2",
       "answer_text": "Water boils at 100 degrees Celsius."
     }
   ]
 }
 
 If you cannot find a student name or roll number, leave them as empty strings.
-If you cannot find any numbered questions, put all the text into question_number 1.
+If you cannot find any numbered questions, put all the text into question_number "1".
 """
 
     def __init__(self):
@@ -112,7 +112,7 @@ If you cannot find any numbered questions, put all the text into question_number
             answers = []
             raw_answers = data.get("extracted_answers", [])
             for ans_dict in raw_answers:
-                q_num = ans_dict.get("question_number", 1)
+                q_num = str(ans_dict.get("question_number", "1"))
                 ans_text = ans_dict.get("answer_text", "").strip()
                 if ans_text:
                     answers.append(

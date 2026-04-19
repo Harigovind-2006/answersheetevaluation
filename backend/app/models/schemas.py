@@ -59,7 +59,7 @@ class ExamDB(ExamBase):
 
 class ModelAnswer(BaseModel):
     question_id: str
-    question_number: int
+    question_number: str
     model_answer: str
     max_marks: int
     section: Optional[str] = None
@@ -88,7 +88,7 @@ class AnswerSheetDB(AnswerSheetBase):
 
 class ExtractedAnswer(BaseModel):
     question_id: str
-    question_number: int
+    question_number: str
     answer_text: str
     confidence: float = Field(ge=0.0, le=1.0)
     section: Optional[str] = None
@@ -117,7 +117,7 @@ class OCRResultDB(BaseModel):
 
 
 class QuestionScore(BaseModel):
-    question_number: int
+    question_number: str
     marks_obtained: int
     max_marks: int
 
